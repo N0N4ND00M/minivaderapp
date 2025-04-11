@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <title>Avancerad Väderapp med Extra Funktioner</title>
+  <style>
+    /* Grundinställningar – bakgrunden ändras med JavaScript (dag/natt) */
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      transition: background 0.8s ease;
+      background: linear-gradient(to right, #74ebd5, #9face6); /* Standard dagbakgrund */
+    }
+    /* Container för hela appen – större och tydligare */
+    .weather-container {
+      background: rgba(255, 255, 255, 0.95);
+      border-radius: 15px;
+      padding: 30px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+      text-align: center;
+      width: 420px;
+    }
+    h1 {
+      font-size: 2em;
+      color: #333;
+      margin-bottom: 20px;
+    }
+    .data-block {
+      margin: 15px 0;
+      font-size: 1.5em;
+    }
+    /* Vindinformationen med text och en visuell indikator */
+    .wind-info {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .wind-indicator {
+      font-size: 3em; /* Stor och tydlig pil */
+      margin-left: 20px;
+      display: inline-block;
+      transition: transform 0.5s ease;
+    }
+    #update-btn {
+      padding: 12px 24px;
+      background: #333;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 1.1em;
+      margin-top: 20px;
+    }
+    #update-btn:hover {
+      background: #555;
+    }
+    #error-message {
+      color: red;
+      font-size: 1em;
+      margin-top: 15px;
+    }
+  </style>
+</head>
+<body>
+  <div class="weather-container">
+    <h1>Aktuellt Väder</h1>
+    <!-- Temperatur visas exakt enligt API-data -->
+    <div class="data-block" id="temperature">Temperatur: -- °C</div>
+    <!-- Enkel väderbeskrivning (baserat på weathercode) -->
+    <div class="data-block" id="description">Väder: --</div>
+    <!-- Vindinformation med både text och en pil -->
+    <div class="data-block wind-info">
+      <div id="windspeed">Vindhastighet: -- km/h</div>
+      <!-- Vindpilen roteras med inline CSS -->
+      <div class="wind-indicator" id="wind-arrow">⬆</div>
+    </div>
+    <div class="data-block" id="winddirection">Vindriktning: --</div>
+    <!-- Soluppgång och solnedgång -->
+    <div class="data-block" id="sun-times">Soluppgång: -- | Solnedgång: --</div>
+    <!-- Tidsstämpel för senast uppdaterad data -->
+    <div class="data-block" id="last-updated">Uppdaterad: --</div>
+    <!-- Visar koordinater med 2 decimaler -->
+    <div class="data-block" id="location"></div>
+    <button id="update-btn">Uppdatera</button>
+    <div id="error-message"></div>
+  </div>
+  
+  <script>
+    // Hämtar element från DOM
+    const temperatureEl = document.getElementById('temperature');
+    const descriptionEl = document.getElementById('description');
+    const windspeedEl = document.getElementById('windspeed');
+    const winddirectionEl = document.getElementById('winddirection');
+    const sunTimesEl = document.getElementById('sun-times');
+    const lastUpdatedEl = document.getElementById('last-updated');
+    const locationEl = document.getElementById('location');
+    const errorEl = document.getElementById('error-message');
+    const updateBtn = document.getElementById('update-btn');
+    const windArrowEl = document.getElementById('wind-arrow');
+
+    // Konverterar vindvinkel (grader) till fullständiga svenska riktningar (16-punkts)
+    function convertWindDirectionToSwedish(degree) {
+      const directions = [
+        "norr", "nordnordost", "nordost", "östnordost",
+        "öster", "östsydost", "sydost", "sydsydost",
+        "söder", "sydsydväst", "sydväst", "västsydväst",
+        "väster", "västnordväst", "nordväst", "nordnordväst"
+      ];
+      const index = Math.floor(((degree + 11.25) % 360) / 22.5);
+      return directions[index] + "lig";
+    }
+
+    // Mapper Open-Meteo:s weathercode till en beskrivning
+    function getWeatherDescription(code) {
+      const codeMap = {
+        0: "Klar himmel",
+        1: "Nästan klar",
+        2: "Delvis molnigt",
+        3: "Molnigt",
+        45: "Dimma",
+        48: "Lätt dimma",
+        51: "Lätt duggregn",
+        53: "Måttligt duggregn",
+        55: "Kraftigt duggregn",
+        61: "Lätt regn",
+        63: "Måttligt regn",
+        65: "Kraftigt regn",
+        71: "Lätt snöfall",
+        73: "Måttligt snöfall",
+        75: "Kraftigt snöfall",
+        80: "Kortvarigt regn",
+        81: "Regn",
+        82: "Kraftigt regn",
+        95: "Åskväder",
+        96: "Åskväder med lätt hagel",
+        99: "Åskväder med kraftigt hagel"
+      };
+      return codeMap[code] || "Okänt väder";
+    }
+
+    // Formaterar en tidsträng (ISO-format) till lokal tid (svensk stil)
+    function formatTime(timeStr) {
+      const date = new Date(timeStr);
+      return date.toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
+    }
+
+    // Formaterar ett datum/tid-stämpel (ISO-format) till svensk kort datum-/tidsformat
+    function formatTimestamp(timestamp) {
+      const date = new Date(timestamp);
+      return date.toLocaleString("sv-SE", { dateStyle: "short", timeStyle: "short" });
+    }
+
+    // Ändrar bakgrund baserat på om det är dag eller natt (jämför aktuell tid med soluppgång/-nedgång)
+    function updateBackground(currentTime, sunriseStr, sunsetStr) {
+      const sunrise = new Date(sunriseStr);
+      const sunset = new Date(sunsetStr);
+      let newBg;
+      if (currentTime >= sunrise && currentTime <= sunset) {
+        // Dag - ljusare gradient
+        newBg = "linear-gradient(to right, #74ebd5, #9face6)";
+      } else {
+        // Natt - mörkare gradient
+        newBg = "linear-gradient(to right, #0f2027, #203a43, #2c5364)";
+      }
+      document.body.style.background = newBg;
+    }
+
+    // Hämtar väderdata från Open-Meteo API med exakta koordinater, inklusive soluppgång och solnedgång
+    function fetchWeather(latitude, longitude) {
+      // Lägg till daily-sunrise,sunset och timezone=auto
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true&daily=sunrise,sunset&timezone=auto`;
+      fetch(url)
+        .then(response => {
+          if (!response.ok) {
+            throw new Error('Nätverksfel, kunde inte hämta väderdata.');
+          }
+          return response.json();
+        })
+        .then(data => {
+          const weather = data.current_weather;
+          // Visa temperatur, exakt enligt data
+          temperatureEl.textContent = `Temperatur: ${weather.temperature} °C`;
+          descriptionEl.textContent = `Väder: ${getWeatherDescription(weather.weathercode)}`;
+          windspeedEl.textContent = `Vindhastighet: ${weather.windspeed} km/h`;
+          // Visa vindriktning som fullständiga svenska ord
+          const windDirSwedish = convertWindDirectionToSwedish(weather.winddirection);
+          winddirectionEl.textContent = `Vindriktning: ${windDirSwedish}`;
+          // Rotera pilen exakt efter vindriktningen
+          windArrowEl.style.transform = `rotate(${weather.winddirection}deg)`;
+          // Hantera soluppgång och solnedgång från daily-data (första indexet)
+          const sunrise = data.daily.sunrise[0];
+          const sunset = data.daily.sunset[0];
+          sunTimesEl.textContent = `Soluppgång: ${formatTime(sunrise)} | Solnedgång: ${formatTime(sunset)}`;
+          // Uppdaterad tid (utgår från current_weather.time)
+          lastUpdatedEl.textContent = `Uppdaterad: ${formatTimestamp(weather.time)}`;
+          locationEl.textContent = `Lat: ${latitude.toFixed(2)}, Lon: ${longitude.toFixed(2)}`;
+          errorEl.textContent = "";
+          // Uppdatera bakgrund (baserat på aktuell tid)
+          const now = new Date();
+          updateBackground(now, sunrise, sunset);
+        })
+        .catch(error => {
+          console.error("Fel vid hämtning av väderdata:", error);
+          errorEl.textContent = error.message;
+        });
+    }
+
+    // Hämtar användarens geografiska position och anropar väderfunktionen
+    function fetchWeatherWithGeolocation() {
+      if ("geolocation" in navigator) {
+        navigator.geolocation.getCurrentPosition(position => {
+          const lat = position.coords.latitude;
+          const lon = position.coords.longitude;
+          fetchWeather(lat, lon);
+        }, error => {
+          errorEl.textContent = "Kunde inte hämta din plats.";
+        });
+      } else {
+        errorEl.textContent = "Geolocation stöds inte av din webbläsare.";
+      }
+    }
+
+    // Hämta vädret vid sidladdning
+    fetchWeatherWithGeolocation();
+
+    // Uppdatera vädret vid knapptryck
+    updateBtn.addEventListener('click', fetchWeatherWithGeolocation);
+  </script>
+</body>
+</html>
